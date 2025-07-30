@@ -1,3 +1,4 @@
+
 from flask import Flask, request, jsonify
 import joblib
 import numpy as np
@@ -100,6 +101,16 @@ def create_table():
                 cases INT,
                 deaths INT,
                 recoveries INT
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                role VARCHAR(50) NOT NULL,
+                state VARCHAR(50) DEFAULT NULL
             )
         """)
         conn.commit()
