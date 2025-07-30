@@ -54,6 +54,7 @@ def upload_stats():
         conn.commit()
         return jsonify({"message": "Data uploaded successfully"})
     except Exception as e:
+        conn.rollback()  # <- Prevents "transaction aborted" issues
         return jsonify({"error": str(e)}), 400
 
 # User View History Endpoint
@@ -83,6 +84,7 @@ def get_history():
             })
         return jsonify(result)
     except Exception as e:
+        conn.rollback()
         return jsonify({"error": str(e)}), 400
 
 # Optional: Create the stats table once
@@ -103,7 +105,8 @@ def create_table():
         conn.commit()
         return "Table created successfully"
     except Exception as e:
-        return f"Error: {e}", 500
+        conn.rollback()
+        return f"Failed to create table: {str(e)}", 500
 
 # Run the app
 if __name__ == "__main__":
