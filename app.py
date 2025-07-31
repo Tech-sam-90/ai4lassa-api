@@ -76,30 +76,33 @@ def upload_stats():
 
         data = request.get_json()
 
+        # Ensure data is a list for bulk upload support
         if isinstance(data, dict):
             data = [data]
 
         for entry in data:
-            state = data["state"]
+            state = entry["state"]
             if user_role != "superadmin" and user_state != state:
-                return jsonify({"error": "Unauthorized for this state"}), 403
-                
-            year = data["year"]
-            month = data["month"]
-            cases = data["cases"]
-            deaths = data["deaths"]
-            recoveries = data["recoveries"]
-            
+                return jsonify({"error": f"Unauthorized for state {state}"}), 403
+
+            year = entry["year"]
+            month = entry["month"]
+            cases = entry["cases"]
+            deaths = entry["deaths"]
+            recoveries = entry["recoveries"]
+
             cursor.execute("""
                 INSERT INTO lassa_stats (state, year, month, cases, deaths, recoveries)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (state, year, month, cases, deaths, recoveries))
-        
+
         conn.commit()
         return jsonify({"message": "Data uploaded successfully"})
+
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 400
+
 
 # 👀 View history
 @app.route("/history", methods=["GET"])
