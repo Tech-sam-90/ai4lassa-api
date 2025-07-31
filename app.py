@@ -62,7 +62,9 @@ def predict():
         features = [data["fever"], data["bleeding"], data["headache"], data["vomiting"], data["temperature"]]
         features_scaled = scaler.transform([features])
         prediction = model.predict_proba(features_scaled)[0]
-        return jsonify({"prediction": prediction[1]})
+        class_1 = prediction[1]
+        
+        return jsonify({"prediction": class_1})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
