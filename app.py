@@ -108,14 +108,11 @@ def get_history():
         cursor.execute("""
             SELECT year, month, cases, deaths, recoveries
             FROM lassa_stats
-            WHERE state = %s AND (
-                       (year = %s AND month >= %s) OR
-                       (year > %s AND year < %s) OR
-                       (year = %s AND month <= %s)
-                    )
-
+            WHERE state = %s
+                       AND year BETWEEN %s AND %s
+                       AND month BETWEEN %s AND %s
             ORDER BY year, month
-        """, (state, start_year, start_month, start_year, end_year, end_year, end_month))
+        """, (state, start_year, end_year, start_month, end_month))
         rows = cursor.fetchall()
         result = []
         for row in rows:
