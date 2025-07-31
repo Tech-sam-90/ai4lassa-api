@@ -63,8 +63,10 @@ def predict():
         features_scaled = scaler.transform([features])
         prediction = model.predict_proba(features_scaled)[0]
         class_1 = prediction[1]
+        percentage =  round(class_1 * 100, 2)
+
         
-        return jsonify({"prediction": class_1})
+        return jsonify({"prediction": percentage})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
