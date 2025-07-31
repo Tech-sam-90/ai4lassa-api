@@ -1,12 +1,12 @@
 from flask import Flask, request, jsonify, g
 import joblib
 import numpy as np
-import psycopg2
+import psycopg2 # type: ignore
 import os
-import bcrypt
+import bcrypt # type: ignore
 import datetime
 from functools import wraps
-from jose import jwt
+from jose import jwt #type: ignore
 
 # Load model and scaler
 model = joblib.load("ai4lassa_svm_model.pkl")
@@ -102,15 +102,30 @@ def get_history():
         state = request.args.get("state")
         start_year = int(request.args.get("start_year"))
         end_year = int(request.args.get("end_year"))
+        start_month = int(request.args.get("start_month"))
+        end_month = int(request.args.get("end_month"))
 
         cursor.execute("""
             SELECT year, month, cases, deaths, recoveries
             FROM lassa_stats
-            WHERE state = %s AND year BETWEEN %s AND %s
+            WHERE state = %s AND (
+                       (year = %s AND month >= %s) OR
+                       (year > %s AND year < %s) OR
+                       (year = %s AND month <= %s)
+                    )
+
             ORDER BY year, month
-        """, (state, start_year, end_year))
+        """, (state, start_year, start_month, start_year, end_year, end_year, end_month))
         rows = cursor.fetchall()
-        result = [{"year": r[0], "month": r[1], "cases": r[2], "deaths": r[3], "recoveries": r[4]} for r in rows]
+        result = []
+        for row in rows:
+            result.append({
+                "year": row[0],
+                "month": row[1],
+                "cases": row[2],
+                "deaths": row[3], 
+                "recoveries": row[4]
+            })
         return jsonify(result)
     except Exception as e:
         conn.rollback()
