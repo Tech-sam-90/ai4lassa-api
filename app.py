@@ -75,20 +75,26 @@ def upload_stats():
         user_state = g.user["state"]
 
         data = request.get_json()
-        state = data["state"]
-        if user_role != "superadmin" and user_state != state:
-            return jsonify({"error": "Unauthorized for this state"}), 403
 
-        year = data["year"]
-        month = data["month"]
-        cases = data["cases"]
-        deaths = data["deaths"]
-        recoveries = data["recoveries"]
+        if isinstance(data, dict):
+            data = [data]
 
-        cursor.execute("""
-            INSERT INTO lassa_stats (state, year, month, cases, deaths, recoveries)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (state, year, month, cases, deaths, recoveries))
+        for entry in data:
+            state = data["state"]
+            if user_role != "superadmin" and user_state != state:
+                return jsonify({"error": "Unauthorized for this state"}), 403
+                
+            year = data["year"]
+            month = data["month"]
+            cases = data["cases"]
+            deaths = data["deaths"]
+            recoveries = data["recoveries"]
+            
+            cursor.execute("""
+                INSERT INTO lassa_stats (state, year, month, cases, deaths, recoveries)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (state, year, month, cases, deaths, recoveries))
+        
         conn.commit()
         return jsonify({"message": "Data uploaded successfully"})
     except Exception as e:
