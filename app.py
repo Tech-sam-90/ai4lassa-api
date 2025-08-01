@@ -62,7 +62,11 @@ def predict():
         features = [data["fever"], data["bleeding"], data["headache"], data["vomiting"], data["temperature"]]
         features_scaled = scaler.transform([features])
         prediction = model.predict_proba(features_scaled)[0]
-        return jsonify({"prediction": prediction[1]})
+        class_1 = prediction[1]
+        percentage =  round(class_1 * 100, 2)
+
+        
+        return jsonify({"prediction": percentage})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
@@ -75,25 +79,34 @@ def upload_stats():
         user_state = g.user["state"]
 
         data = request.get_json()
-        state = data["state"]
-        if user_role != "superadmin" and user_state != state:
-            return jsonify({"error": "Unauthorized for this state"}), 403
 
-        year = data["year"]
-        month = data["month"]
-        cases = data["cases"]
-        deaths = data["deaths"]
-        recoveries = data["recoveries"]
+        # Ensure data is a list for bulk upload support
+        if isinstance(data, dict):
+            data = [data]
 
-        cursor.execute("""
-            INSERT INTO lassa_stats (state, year, month, cases, deaths, recoveries)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (state, year, month, cases, deaths, recoveries))
+        for entry in data:
+            state = entry["state"]
+            if user_role != "superadmin" and user_state != state:
+                return jsonify({"error": f"Unauthorized for state {state}"}), 403
+
+            year = entry["year"]
+            month = entry["month"]
+            cases = entry["cases"]
+            deaths = entry["deaths"]
+            recoveries = entry["recoveries"]
+
+            cursor.execute("""
+                INSERT INTO lassa_stats (state, year, month, cases, deaths, recoveries)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (state, year, month, cases, deaths, recoveries))
+
         conn.commit()
         return jsonify({"message": "Data uploaded successfully"})
+
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 400
+
 
 # 👀 View history
 @app.route("/history", methods=["GET"])
@@ -108,14 +121,11 @@ def get_history():
         cursor.execute("""
             SELECT year, month, cases, deaths, recoveries
             FROM lassa_stats
-            WHERE state = %s AND (
-                       (year = %s AND month >= %s) OR
-                       (year > %s AND year < %s) OR
-                       (year = %s AND month <= %s)
-                    )
-
+            WHERE state = %s
+                       AND year BETWEEN %s AND %s
+                       AND month BETWEEN %s AND %s
             ORDER BY year, month
-        """, (state, start_year, start_month, start_year, end_year, end_year, end_month))
+        """, (state, start_year, end_year, start_month, end_month))
         rows = cursor.fetchall()
         result = []
         for row in rows:
