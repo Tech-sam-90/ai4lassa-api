@@ -12,7 +12,7 @@ An intelligent web API for predicting Lassa fever cases using machine learning a
 
 📂 Endpoints
 🔐 Authentication
-POST /register
+1. POST /register
 Register a user (superadmin or state admin).
 
 json
@@ -22,24 +22,23 @@ json
   "role": "admin",          // or "superadmin"
   "state": "Lagos"          // required only for admin
 }
-POST /login
+
+2. POST /login
 Login and receive a JWT token.
 
 json
-
 {
   "email": "admin@example.com",
   "password": "yourpassword"
-}
-Returns:
-
-json
-
+  }
+  Returns:
+  json
 {
   "token": "your.jwt.token"
 }
+
 🧪 Machine Learning Prediction
-POST /predict
+3. POST /predict
 Make a Lassa fever prediction from symptoms.
 
 json
@@ -56,14 +55,13 @@ json
 {
   "prediction_percentage": "76.45%"
 }
+
 📥 Upload Stats
 POST /upload_stats
 Upload monthly stats. (Authenticated)
 
 superadmin can upload for any state
-
 admin can upload only for their state
-
 Single or bulk upload format:
 
 json
@@ -145,4 +143,4 @@ Environment variables set on Render dashboard
 
 📬 Contact
 Built by Samuel Akinwumi Adeniji
-Email: akinwumitech@gmail.com
+Email: ifeoluwasamuel40@gmail.com
