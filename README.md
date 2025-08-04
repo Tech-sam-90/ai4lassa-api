@@ -1,4 +1,5 @@
 🧠 AI4Lassa API
+
 An intelligent web API for predicting Lassa fever cases using machine learning and for managing statistical health data across different states in Nigeria. Built with Flask, PostgreSQL, and deployed on Render.
 
 🚀 Features
