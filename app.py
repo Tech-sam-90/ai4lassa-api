@@ -54,6 +54,15 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def superadmin_required(f):
+    @wraps(f)
+    @token_required
+    def decorated(*args, **kwargs):
+        if not g.user.get("is_superadmin", False):
+            return jsonify({"error": "Superadmin access required"}), 403
+        return f(*args, **kwargs)
+    return decorated
+
 # ========== Endpoints ==========
 
 # 🧪 Prediction
@@ -173,7 +182,8 @@ def create_table():
                 role VARCHAR(50) NOT NULL,
                 state VARCHAR(50),
                 is_superadmin BOOLEAN DEFAULT FALSE,
-                is_active BOOLEAN DEFAULT FALSE
+                is_active BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         conn.commit()
@@ -182,31 +192,61 @@ def create_table():
         conn.rollback()
         return f"Error: {str(e)}", 500
 
-# 👤 Register user
+# 👤 Register state admin (app registration - requires approval)
 @app.route("/register", methods=["POST"])
 def register():
     try:
         data = request.get_json()
         email = data["email"]
         password = data["password"]
-        role = data["role"]
+        role = data.get("role", "state_admin")  # Default to state_admin
         state = data.get("state")
-        is_superadmin = data.get("is_superadmin", False)
+
+        # Prevent superadmin registration through app
+        if role == "superadmin" or data.get("is_superadmin", False):
+            return jsonify({"error": "Superadmin accounts cannot be created through this endpoint"}), 403
+
+        # Validate required fields for state_admin
+        if role == "state_admin" and not state:
+            return jsonify({"error": "State is required for state admin registration"}), 400
 
         hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-        is_active = True if is_superadmin else False
 
         cursor.execute("""
             INSERT INTO users (email, password, role, state, is_superadmin, is_active)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (email, hashed_pw, role, state, is_superadmin, is_active))
+        """, (email, hashed_pw, role, state, False, False))
         conn.commit()
 
-        if is_superadmin:
-            return jsonify({"message":"Superadmin account created and activated successfully"})
-        else:
-            return jsonify({"message": "User registered successfully. Awaiting superadmin activation."})
+        return jsonify({"message": "State admin registered successfully. Awaiting superadmin activation."})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 400
+
+# 👑 Manual superadmin registration (Postman only)
+@app.route("/create_superadmin", methods=["POST"])
+def create_superadmin():
+    try:
+        data = request.get_json()
+        email = data["email"]
+        password = data["password"]
+        
+        # Optional secret key validation for extra security
+        secret_key = data.get("secret_key")
+        expected_secret = os.environ.get("SUPERADMIN_SECRET_KEY", "your_super_secret_key")
+        
+        if secret_key != expected_secret:
+            return jsonify({"error": "Invalid secret key"}), 403
+
+        hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+        cursor.execute("""
+            INSERT INTO users (email, password, role, state, is_superadmin, is_active)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (email, hashed_pw, "superadmin", None, True, True))
+        conn.commit()
+
+        return jsonify({"message": "Superadmin account created and activated successfully"})
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 400
@@ -229,7 +269,7 @@ def login():
             return jsonify({"error": "Incorrect password"}), 401
 
         token = generate_token(user_id, role, state, is_superadmin, is_active)
-        return jsonify({"token": token})
+        return jsonify({"token": token, "user": {"role": role, "state": state, "is_active": is_active}})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
@@ -239,17 +279,193 @@ def login():
 def me():
     return jsonify({"user": g.user})
 
+# 📋 Get pending users (Superadmin only)
+@app.route("/pending_users", methods=["GET"])
+@superadmin_required
+def get_pending_users():
+    try:
+        cursor.execute("""
+            SELECT id, email, role, state, created_at 
+            FROM users 
+            WHERE is_active = FALSE AND is_superadmin = FALSE
+            ORDER BY created_at DESC
+        """)
+        rows = cursor.fetchall()
+        
+        result = [
+            {
+                "id": row[0],
+                "email": row[1],
+                "role": row[2],
+                "state": row[3],
+                "created_at": row[4].isoformat() if row[4] else None
+            }
+            for row in rows
+        ]
+        return jsonify({"pending_users": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
 # 🔓 Activate user (Superadmin only)
 @app.route("/activate_user/<int:user_id>", methods=["POST"])
-@token_required
+@superadmin_required
 def activate_user(user_id):
     try:
-        if not g.user.get("is_superadmin", False):
-            return jsonify({"error": "Only superadmins can activate accounts"}), 403
-
-        cursor.execute("UPDATE users SET is_active = TRUE WHERE id = %s", (user_id,))
+        cursor.execute("UPDATE users SET is_active = TRUE WHERE id = %s AND is_superadmin = FALSE", (user_id,))
+        
+        if cursor.rowcount == 0:
+            return jsonify({"error": "User not found or user is already a superadmin"}), 404
+            
         conn.commit()
         return jsonify({"message": "User activated successfully"})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 400
+
+# 🚫 Deactivate user (Superadmin only)
+@app.route("/deactivate_user/<int:user_id>", methods=["POST"])
+@superadmin_required
+def deactivate_user(user_id):
+    try:
+        cursor.execute("UPDATE users SET is_active = FALSE WHERE id = %s AND is_superadmin = FALSE", (user_id,))
+        
+        if cursor.rowcount == 0:
+            return jsonify({"error": "User not found or user is already a superadmin"}), 404
+            
+        conn.commit()
+        return jsonify({"message": "User deactivated successfully"})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 400
+
+# 👥 Get all users (Superadmin only)
+@app.route("/users", methods=["GET"])
+@superadmin_required
+def get_all_users():
+    try:
+        cursor.execute("""
+            SELECT id, email, role, state, is_active, created_at 
+            FROM users 
+            WHERE is_superadmin = FALSE
+            ORDER BY created_at DESC
+        """)
+        rows = cursor.fetchall()
+        
+        result = [
+            {
+                "id": row[0],
+                "email": row[1],
+                "role": row[2],
+                "state": row[3],
+                "is_active": row[4],
+                "created_at": row[5].isoformat() if row[5] else None
+            }
+            for row in rows
+        ]
+        return jsonify({"users": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+# 👨‍💼 Get all admins (Superadmin only)
+@app.route("/admins", methods=["GET"])
+@superadmin_required
+def get_all_admins():
+    try:
+        cursor.execute("""
+            SELECT id, email, role, state, is_superadmin, is_active, created_at 
+            FROM users 
+            ORDER BY is_superadmin DESC, created_at DESC
+        """)
+        rows = cursor.fetchall()
+        
+        result = [
+            {
+                "id": row[0],
+                "email": row[1],
+                "role": row[2],
+                "state": row[3],
+                "is_superadmin": row[4],
+                "is_active": row[5],
+                "created_at": row[6].isoformat() if row[6] else None
+            }
+            for row in rows
+        ]
+        return jsonify({"admins": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+# 🔓 Activate admin (Superadmin only)
+@app.route("/admins/<int:admin_id>/activate", methods=["PATCH"])
+@superadmin_required
+def activate_admin(admin_id):
+    try:
+        # Check if the target user exists and is not the current superadmin
+        cursor.execute("SELECT id, email, is_superadmin FROM users WHERE id = %s", (admin_id,))
+        target_user = cursor.fetchone()
+        
+        if not target_user:
+            return jsonify({"error": "Admin not found"}), 404
+            
+        # Prevent superadmin from deactivating themselves (safety check)
+        if target_user[2] and target_user[0] == g.user["user_id"]:
+            return jsonify({"error": "Cannot modify your own superadmin account"}), 403
+        
+        cursor.execute("UPDATE users SET is_active = TRUE WHERE id = %s", (admin_id,))
+        conn.commit()
+        
+        return jsonify({"message": f"Admin {target_user[1]} activated successfully"})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 400
+
+# 🚫 Deactivate admin (Superadmin only)
+@app.route("/admins/<int:admin_id>/deactivate", methods=["PATCH"])
+@superadmin_required
+def deactivate_admin(admin_id):
+    try:
+        # Check if the target user exists and is not the current superadmin
+        cursor.execute("SELECT id, email, is_superadmin FROM users WHERE id = %s", (admin_id,))
+        target_user = cursor.fetchone()
+        
+        if not target_user:
+            return jsonify({"error": "Admin not found"}), 404
+            
+        # Prevent superadmin from deactivating themselves
+        if target_user[2] and target_user[0] == g.user["user_id"]:
+            return jsonify({"error": "Cannot deactivate your own superadmin account"}), 403
+            
+        cursor.execute("UPDATE users SET is_active = FALSE WHERE id = %s", (admin_id,))
+        conn.commit()
+        
+        return jsonify({"message": f"Admin {target_user[1]} deactivated successfully"})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 400
+
+# 👑 Promote admin to superadmin (Superadmin only)
+@app.route("/admins/<int:admin_id>/make_super", methods=["PATCH"])
+@superadmin_required
+def promote_to_superadmin(admin_id):
+    try:
+        # Check if the target user exists and is not already a superadmin
+        cursor.execute("SELECT id, email, is_superadmin, is_active FROM users WHERE id = %s", (admin_id,))
+        target_user = cursor.fetchone()
+        
+        if not target_user:
+            return jsonify({"error": "Admin not found"}), 404
+            
+        if target_user[2]:  # is_superadmin is True
+            return jsonify({"error": "User is already a superadmin"}), 400
+            
+        # Promote to superadmin and ensure they're active
+        cursor.execute("""
+            UPDATE users 
+            SET is_superadmin = TRUE, is_active = TRUE, role = 'superadmin', state = NULL 
+            WHERE id = %s
+        """, (admin_id,))
+        conn.commit()
+        
+        return jsonify({"message": f"Admin {target_user[1]} promoted to superadmin successfully"})
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 400
