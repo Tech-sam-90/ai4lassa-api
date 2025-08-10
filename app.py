@@ -1,12 +1,12 @@
 from flask import Flask, request, jsonify, g
 import joblib
 import numpy as np
-import psycopg2 # type: ignore
+import psycopg2  # type: ignore
 import os
-import bcrypt # type: ignore
+import bcrypt  # type: ignore
 import datetime
 from functools import wraps
-from jose import jwt #type: ignore
+from jose import jwt  # type: ignore
 
 # Load model and scaler
 model = joblib.load("ai4lassa_svm_model.pkl")
@@ -25,11 +25,13 @@ conn = psycopg2.connect(DATABASE_URL, sslmode='require')
 cursor = conn.cursor()
 
 # ========== Helper Functions ==========
-def generate_token(user_id, role, state):
+def generate_token(user_id, role, state, is_superadmin, is_active):
     payload = {
         "user_id": user_id,
         "role": role,
         "state": state,
+        "is_superadmin": is_superadmin,
+        "is_active": is_active,
         "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=12)
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=JWT_ALGORITHM)
@@ -63,9 +65,7 @@ def predict():
         features_scaled = scaler.transform([features])
         prediction = model.predict_proba(features_scaled)[0]
         class_1 = prediction[1]
-        percentage =  round(class_1 * 100, 2)
-
-        
+        percentage = round(class_1 * 100, 2)
         return jsonify({"prediction": percentage})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -77,10 +77,12 @@ def upload_stats():
     try:
         user_role = g.user["role"]
         user_state = g.user["state"]
+        is_active = g.user["is_active"]
+
+        if not is_active:
+            return jsonify({"error": "Account not activated by superadmin"}), 403
 
         data = request.get_json()
-
-        # Ensure data is a list for bulk upload support
         if isinstance(data, dict):
             data = [data]
 
@@ -107,7 +109,6 @@ def upload_stats():
         conn.rollback()
         return jsonify({"error": str(e)}), 400
 
-
 # 👀 View history
 @app.route("/history", methods=["GET"])
 def get_history():
@@ -127,15 +128,16 @@ def get_history():
             ORDER BY year, month
         """, (state, start_year, end_year, start_month, end_month))
         rows = cursor.fetchall()
-        result = []
-        for row in rows:
-            result.append({
+        result = [
+            {
                 "year": row[0],
                 "month": row[1],
                 "cases": row[2],
-                "deaths": row[3], 
+                "deaths": row[3],
                 "recoveries": row[4]
-            })
+            }
+            for row in rows
+        ]
         return jsonify(result)
     except Exception as e:
         conn.rollback()
@@ -146,6 +148,9 @@ def get_history():
 def create_table():
     try:
         cursor.execute("""
+            DROP TABLE IF EXISTS lassa_stats CASCADE;
+            DROP TABLE IF EXISTS users CASCADE;
+                                  
             CREATE TABLE IF NOT EXISTS lassa_stats (
                 id SERIAL PRIMARY KEY,
                 state VARCHAR(50),
@@ -160,11 +165,13 @@ def create_table():
                 email VARCHAR(255) UNIQUE NOT NULL,
                 password TEXT NOT NULL,
                 role VARCHAR(50) NOT NULL,
-                state VARCHAR(50)
+                state VARCHAR(50),
+                is_superadmin BOOLEAN DEFAULT FALSE,
+                is_active BOOLEAN DEFAULT FALSE
             );
         """)
         conn.commit()
-        return "Tables created successfully"
+        return "Tables dropped and recreated successfully"
     except Exception as e:
         conn.rollback()
         return f"Error: {str(e)}", 500
@@ -178,15 +185,16 @@ def register():
         password = data["password"]
         role = data["role"]
         state = data.get("state")
+        is_superadmin = data.get("is_superadmin", False)
 
         hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
         cursor.execute("""
-            INSERT INTO users (email, password, role, state)
-            VALUES (%s, %s, %s, %s)
-        """, (email, hashed_pw, role, state))
+            INSERT INTO users (email, password, role, state, is_superadmin, is_active)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (email, hashed_pw, role, state, is_superadmin, False))
         conn.commit()
-        return jsonify({"message": "User registered successfully"})
+        return jsonify({"message": "User registered successfully. Awaiting superadmin activation."})
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 400
@@ -199,16 +207,16 @@ def login():
         email = data["email"]
         password = data["password"]
 
-        cursor.execute("SELECT id, password, role, state FROM users WHERE email = %s", (email,))
+        cursor.execute("SELECT id, password, role, state, is_superadmin, is_active FROM users WHERE email = %s", (email,))
         user = cursor.fetchone()
         if not user:
             return jsonify({"error": "User not found"}), 404
 
-        user_id, hashed_pw, role, state = user
+        user_id, hashed_pw, role, state, is_superadmin, is_active = user
         if not bcrypt.checkpw(password.encode(), hashed_pw.encode()):
             return jsonify({"error": "Incorrect password"}), 401
 
-        token = generate_token(user_id, role, state)
+        token = generate_token(user_id, role, state, is_superadmin, is_active)
         return jsonify({"token": token})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -218,6 +226,21 @@ def login():
 @token_required
 def me():
     return jsonify({"user": g.user})
+
+# 🔓 Activate user (Superadmin only)
+@app.route("/activate_user/<int:user_id>", methods=["POST"])
+@token_required
+def activate_user(user_id):
+    try:
+        if not g.user.get("is_superadmin", False):
+            return jsonify({"error": "Only superadmins can activate accounts"}), 403
+
+        cursor.execute("UPDATE users SET is_active = TRUE WHERE id = %s", (user_id,))
+        conn.commit()
+        return jsonify({"message": "User activated successfully"})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 400
 
 # Run
 if __name__ == "__main__":
