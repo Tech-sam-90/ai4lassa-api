@@ -144,9 +144,15 @@ def get_history():
         return jsonify({"error": str(e)}), 400
 
 # 🛠️ Create table
-@app.route("/create_table")
+@app.route("/create_table", methods=["GET"])
 def create_table():
     try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT current_database(), current_schema();")
+        db_info = cursor.fetchone()
+        print(f"Connected to DB: {db_info[0]}, Schema: {db_info[1]}")
         cursor.execute("""
             DROP TABLE IF EXISTS lassa_stats CASCADE;
             DROP TABLE IF EXISTS users CASCADE;
