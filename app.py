@@ -95,6 +95,9 @@ def upload_stats():
         if isinstance(data, dict):
             data = [data]
 
+        updated_records = []
+        inserted_records = []        
+
         for entry in data:
             state = entry["state"]
             if user_role != "superadmin" and user_state != state:
@@ -105,14 +108,46 @@ def upload_stats():
             cases = entry["cases"]
             deaths = entry["deaths"]
             recoveries = entry["recoveries"]
-
+            
+            #Check if recors already exists
             cursor.execute("""
-                INSERT INTO lassa_stats (state, year, month, cases, deaths, recoveries)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (state, year, month, cases, deaths, recoveries))
+                SELECT id FROM lassa_stats
+                WHERE state = %s AND year = %s AND month = %s
+            """, (state, year, month))
+            existing_record = cursor.fetchone()
+
+            if existing_record:
+                #Update existing record
+                cursor.execute("""
+                    UPDATE lassa_stats
+                    SET cases = %s, deaths = %s, recoveries = %s
+                    WHERE state = %s AND year = %s AND month = %s
+                """, (cases, deaths, recoveries, state, year, month))
+                updated_records.append(f"{state} {year}-{month:02d}")
+            else:
+                #Insert new records
+                cursor.execute("""
+                    INSERT INTO lassa_stats (state, year, month, cases, deaths, recoveries)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (state, year, month, cases, deaths, recoveries))
+                inserted_records.append(f"{state} {year}-{month:02d}")
+
 
         conn.commit()
-        return jsonify({"message": "Data uploaded successfully"})
+
+        #Prepare response message
+        message_parts = []
+        if inserted_records:
+            message_parts.append(f"Inserted {len(inserted_records)} new records")
+        if updated_records:
+            message_parts.append(f"Updated {len(updated_records)} existing records")
+        
+        return jsonify({
+            "message": ". ".join(message_parts),
+            "inserted": inserted_records,
+            "updated": updated_records,
+            "total_processed": len(data)
+        })
 
     except Exception as e:
         conn.rollback()
