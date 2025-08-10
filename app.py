@@ -195,12 +195,18 @@ def register():
 
         hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
+        is_active = True if is_superadmin else False
+
         cursor.execute("""
             INSERT INTO users (email, password, role, state, is_superadmin, is_active)
             VALUES (%s, %s, %s, %s, %s, %s)
-        """, (email, hashed_pw, role, state, is_superadmin, False))
+        """, (email, hashed_pw, role, state, is_superadmin, is_active))
         conn.commit()
-        return jsonify({"message": "User registered successfully. Awaiting superadmin activation."})
+
+        if is_superadmin:
+            return jsonify({"message":"Superadmin account created and activated successfully"})
+        else:
+            return jsonify({"message": "User registered successfully. Awaiting superadmin activation."})
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 400
