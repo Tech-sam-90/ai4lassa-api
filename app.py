@@ -578,7 +578,7 @@ def activate_user(user_id):
 def me():
     try:
         user_id = g.user["user_id"]
-        cursor.execute("""SELECT id, email, first_name, last_name, role, state, is_verified, is_active, created_at FROM users WHERE id = %s""", (user_id,))
+        cursor.execute("""SELECT id, email, first_name, last_name, role, state, is_superadmin, is_verified, is_active, created_at FROM users WHERE id = %s""", (user_id,))
         user_data = cursor.fetchone()
         if not user_data:
             return jsonify({"error": "User not found"}), 404
