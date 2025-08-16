@@ -531,7 +531,7 @@ def create_superadmin():
         # Superadmins are created as verified and active
         cursor.execute("""
             INSERT INTO users (email, password, first_name, last_name, role, state, is_superadmin, is_verified, is_active)
-            VALUES (%s, %s, %s, %s, NULL, TRUE, TRUE, TRUE)
+            VALUES (%s, %s, %s, %s, NULL, NULL, TRUE, TRUE, TRUE)
         """, (email, hashed_pw, first_name, last_name, "superadmin"))
         conn.commit()
         return jsonify({"message": "Superadmin account created and activated successfully"})
@@ -782,4 +782,3 @@ if __name__ == "__main__":
         logging.warning("One or more critical environment variables are not set. The application might not function correctly.")
     app.run(host="0.0.0.0", port=10000)
 
-    
