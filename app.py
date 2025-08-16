@@ -130,6 +130,17 @@ def superadmin_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def log_upload_activity(user_id, action_details):
+    """Logs upload activity for a user."""
+    try:
+        cursor.execute("""
+            INSERT INTO upload_logs (user_id, action_details, created_at)
+            VALUES (%s, %s, %s  )
+        """, (user_id, action_details, datetime.datetime.now(datetime.timezone.utc)))
+        conn.commit()
+    except Exception as e:
+        logging.error(f"Failed to log upload activity for user {user_id}: {e}")
+
 # ========== Endpoints ==========
 
 # 🧪 Prediction
@@ -159,6 +170,7 @@ def upload_stats():
     try:
         user_role = g.user["role"]
         user_state = g.user["state"]
+        user_id = g.user["user_id"]
         data = request.get_json()
         if isinstance(data, dict):
             data = [data]
@@ -182,6 +194,11 @@ def upload_stats():
                 inserted_records.append(f"{state} {year}-{month:02d}")
         
         conn.commit()
+
+        #Log the upload activity
+        action_details = f"Inserted {len(inserted_records)} records, Updated {len(updated_records)} records. States: {','.join(set([entry['state'] for entry in data]))}"
+        log_upload_activity(user_id, action_details)
+
         return jsonify({
             "message": f"Inserted {len(inserted_records)} and updated {len(updated_records)} records.",
             "inserted": inserted_records,
@@ -189,6 +206,30 @@ def upload_stats():
         })
     except Exception as e:
         conn.rollback()
+        return jsonify({"error": str(e)}), 400
+    
+#Get last 5 uploads for the authenticated user
+@app.route("/upload_stats/last_5", methods=["GET"])
+@token_required
+def get_my_recent_uploads():
+    try:
+        user_id = g.user["user_id"]
+        cursor.execute("""
+            SELECT action_details, created_at FROM upload_logs
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT 5
+        """, (user_id,))
+
+        uploads = []
+        for row in cursor.fetchall():
+            action_details, created_at = row
+            uploads.append({
+                "action_details": row[0],
+                "created_at": row[1].isoformat()
+            })
+        return jsonify({"recent_uploads": uploads})
+    except Exception as e:
         return jsonify({"error": str(e)}), 400
 
 # 👀 View history
@@ -214,6 +255,7 @@ def get_history():
 def create_tables():
     try:
         cursor.execute("""
+            DROP TABLE IF EXISTS upload_logs CASCADE;
             DROP TABLE IF EXISTS tokens CASCADE;
             DROP TABLE IF EXISTS lassa_stats CASCADE;
             DROP TABLE IF EXISTS users CASCADE;
@@ -222,6 +264,8 @@ def create_tables():
                 id SERIAL PRIMARY KEY,
                 email VARCHAR(255) UNIQUE NOT NULL,
                 password TEXT NOT NULL,
+                first_name VARCHAR(100) NOT NULL,
+                last_name VARCHAR(100) NOT NULL,
                 role VARCHAR(50) NOT NULL,
                 state VARCHAR(50),
                 is_superadmin BOOLEAN DEFAULT FALSE,
@@ -248,8 +292,17 @@ def create_tables():
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 expires_at TIMESTAMP WITH TIME ZONE NOT NULL
             );
-            
+
+            CREATE TABLE IF NOT EXISTS upload_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                action_details TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_tokens_user_id ON tokens(user_id);
+            CREATE INDEX IF NOT EXISTS idx_upload_logs_user_id ON upload_logs(user_id);
+            CREATE INDEX IF NOT EXISTS idx_upload_logs_created_at ON upload_logs(created_at);
         """)
         conn.commit()
         return "Tables dropped and recreated successfully."
@@ -262,17 +315,24 @@ def create_tables():
 def register():
     try:
         data = request.get_json()
-        email, password, state = data["email"], data["password"], data.get("state")
+        email = data["email"]
+        password = data["password"]
+        first_name = data["first_name"]
+        last_name = data["last_name"]
+        state = data.get("state")
 
         if not state:
             return jsonify({"error": "State is required for state admin registration"}), 400
+        
+        if not all([email, password, first_name, last_name]):
+            return jsonify({"error": "All fields are required."}), 400
 
         hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
         # Insert user as unverified and inactive
         cursor.execute("""
-            INSERT INTO users (email, password, role, state, is_superadmin, is_verified, is_active)
-            VALUES (%s, %s, %s, %s, FALSE, FALSE, FALSE)
+            INSERT INTO users (email, password, first_name, last_name, role, state, is_superadmin, is_verified, is_active)
+            VALUES (%s, %s, %s, %s, %s, %s, FALSE, FALSE, FALSE)
             RETURNING id
         """, (email, hashed_pw, 'state_admin', state))
         user_id = cursor.fetchone()[0]
@@ -288,7 +348,7 @@ def register():
         # Send verification email
         verification_url = f"{request.host_url}verify_email?token={token}"
         html_content = f"""
-            <h3>Welcome to AI4Lassa!</h3>
+            <h3>Welcome to AI4Lassa, {first_name} {last_name}!</h3>
             <p>Thank you for registering. Please click the link below to verify your email address:</p>
             <a href="{verification_url}">Verify My Email</a>
             <p>This link will expire in 24 hours.</p>
@@ -455,17 +515,24 @@ def reset_password():
 def create_superadmin():
     try:
         data = request.get_json()
-        email, password, secret_key = data["email"], data["password"], data.get("secret_key")
-        
+        email = data["email"]
+        password = data["password"]
+        first_name = data["first_name"]
+        last_name = data["last_name"]
+        secret_key = data.get("secret_key")
+
         if secret_key != SUPERADMIN_SECRET_KEY:
             return jsonify({"error": "Invalid secret key"}), 403
+        
+        if not all([email, password, first_name, last_name]):
+            return jsonify({"error": "All fields are required."}), 400
 
         hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         # Superadmins are created as verified and active
         cursor.execute("""
-            INSERT INTO users (email, password, role, state, is_superadmin, is_verified, is_active)
-            VALUES (%s, %s, %s, NULL, TRUE, TRUE, TRUE)
-        """, (email, hashed_pw, "superadmin"))
+            INSERT INTO users (email, password, first_name, last_name, role, state, is_superadmin, is_verified, is_active)
+            VALUES (%s, %s, %s, %s, NULL, TRUE, TRUE, TRUE)
+        """, (email, hashed_pw, first_name, last_name, "superadmin"))
         conn.commit()
         return jsonify({"message": "Superadmin account created and activated successfully"})
     except Exception as e:
@@ -478,11 +545,11 @@ def create_superadmin():
 def get_pending_users():
     try:
         cursor.execute("""
-            SELECT id, email, role, state, created_at FROM users 
+            SELECT id, email, first_name, last_name, role, state, created_at FROM users 
             WHERE is_verified = TRUE AND is_active = FALSE AND is_superadmin = FALSE
             ORDER BY created_at DESC
         """)
-        users = [{"id": r[0], "email": r[1], "role": r[2], "state": r[3], "created_at": r[4].isoformat()} for r in cursor.fetchall()]
+        users = [{"id": r[0], "email": r[1], "first_name": r[2], "last_name": r[3], "role": r[4], "state": r[5], "created_at": r[6].isoformat()} for r in cursor.fetchall()]
         return jsonify({"pending_users": users})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -509,7 +576,27 @@ def activate_user(user_id):
 @app.route("/me", methods=["GET"])
 @token_required
 def me():
-    return jsonify({"user": g.user})
+    try:
+        user_id = g.user["user_id"]
+        cursor.execute("""SELECT id, email, first_name, last_name, role, state, is_verified, is_active, created_at FROM users WHERE id = %s""", (user_id,))
+        user_data = cursor.fetchone()
+        if not user_data:
+            return jsonify({"error": "User not found"}), 404
+        user_data = {
+            "id": user_data[0],
+            "email": user_data[1],
+            "first_name": user_data[2],
+            "last_name": user_data[3],
+            "role": user_data[4],
+            "state": user_data[5],
+            "is_superadmin": user_data[6],
+            "is_verified": user_data[7],
+            "is_active": user_data[8],
+            "created_at": user_data[9].isoformat() if user_data[9] else None
+        }
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"user": user_data})
 
 # 🚫 Deactivate user (Superadmin only)
 @app.route("/deactivate_user/<int:user_id>", methods=["POST"])
@@ -531,24 +618,52 @@ def deactivate_user(user_id):
 def get_all_users():
     try:
         cursor.execute("""
-            SELECT id, email, role, state, is_verified, is_active, created_at 
+            SELECT id, email, first_name, last_name, role, state, is_verified, is_active, created_at 
             FROM users WHERE is_superadmin = FALSE ORDER BY created_at DESC
         """)
-        users = [{"id": r[0], "email": r[1], "role": r[2], "state": r[3], "is_verified": r[4], "is_active": r[5], "created_at": r[6].isoformat()} for r in cursor.fetchall()]
+        users = []
+        for r in cursor.fetchall():
+            users.append({
+                "id": r[0], 
+                "email": r[1], 
+                "first_name": r[2],
+                "last_name": r[3],
+                "full_name": f"{r[2]} {r[3]}",
+                "role": r[4], 
+                "state": r[5], 
+                "is_verified": r[6], 
+                "is_active": r[7], 
+                "created_at": r[8].isoformat()
+            })
         return jsonify({"users": users})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+
 # 👨‍💼 Get all admins (Superadmin only)
-@app.route("/admins", methods=["GET"])
+app.route("/admins", methods=["GET"])
 @superadmin_required
 def get_all_admins():
     try:
         cursor.execute("""
-            SELECT id, email, role, state, is_superadmin, is_verified, is_active, created_at 
+            SELECT id, email, first_name, last_name, role, state, is_superadmin, is_verified, is_active, created_at 
             FROM users ORDER BY is_superadmin DESC, created_at DESC
         """)
-        admins = [{"id": r[0], "email": r[1], "role": r[2], "state": r[3], "is_superadmin": r[4], "is_verified": r[5], "is_active": r[6], "created_at": r[7].isoformat()} for r in cursor.fetchall()]
+        admins = []
+        for r in cursor.fetchall():
+            admins.append({
+                "id": r[0], 
+                "email": r[1], 
+                "first_name": r[2],
+                "last_name": r[3],
+                "full_name": f"{r[2]} {r[3]}",
+                "role": r[4], 
+                "state": r[5], 
+                "is_superadmin": r[6], 
+                "is_verified": r[7], 
+                "is_active": r[8], 
+                "created_at": r[9].isoformat()
+            })
         return jsonify({"admins": admins})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -629,8 +744,42 @@ def promote_to_superadmin(admin_id):
         conn.rollback()
         return jsonify({"error": str(e)}), 400
 
+# 📊 Get upload statistics for all users (Superadmin only)
+@app.route("/upload_statistics", methods=["GET"])
+@superadmin_required
+def get_upload_statistics():
+    try:
+        cursor.execute("""
+            SELECT u.id, u.first_name, u.last_name, u.email, u.state, 
+                   COUNT(ul.id) as total_uploads,
+                   MAX(ul.created_at) as last_upload
+            FROM users u
+            LEFT JOIN upload_logs ul ON u.id = ul.user_id
+            WHERE u.is_superadmin = FALSE
+            GROUP BY u.id, u.first_name, u.last_name, u.email, u.state
+            ORDER BY total_uploads DESC, last_upload DESC
+        """)
+        
+        statistics = []
+        for row in cursor.fetchall():
+            statistics.append({
+                "user_id": row[0],
+                "name": f"{row[1]} {row[2]}",
+                "email": row[3],
+                "state": row[4],
+                "total_uploads": row[5],
+                "last_upload": row[6].isoformat() if row[6] else None
+            })
+        
+        return jsonify({"upload_statistics": statistics})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
 # Run
 if __name__ == "__main__":
     if not all([DATABASE_URL, SECRET_KEY, SUPERADMIN_SECRET_KEY, EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASS]):
         logging.warning("One or more critical environment variables are not set. The application might not function correctly.")
     app.run(host="0.0.0.0", port=10000)
+
+    
