@@ -332,7 +332,7 @@ def register():
         # Insert user as unverified and inactive
         cursor.execute("""
             INSERT INTO users (email, password, first_name, last_name, role, state, is_superadmin, is_verified, is_active)
-            VALUES (%s, %s, %s, %s, %s, %s, FALSE, FALSE, FALSE)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (email, hashed_pw, first_name, last_name, 'state_admin', state, False, False, False))
         user_id = cursor.fetchone()[0]
