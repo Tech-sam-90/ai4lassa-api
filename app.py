@@ -531,8 +531,8 @@ def create_superadmin():
         # Superadmins are created as verified and active
         cursor.execute("""
             INSERT INTO users (email, password, first_name, last_name, role, state, is_superadmin, is_verified, is_active)
-            VALUES (%s, %s, %s, %s, NULL, NULL, TRUE, TRUE, TRUE)
-        """, (email, hashed_pw, first_name, last_name, "superadmin"))
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (email, hashed_pw, first_name, last_name, "superadmin", None, True, True, True))
         conn.commit()
         return jsonify({"message": "Superadmin account created and activated successfully"})
     except Exception as e:
