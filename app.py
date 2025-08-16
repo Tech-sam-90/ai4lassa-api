@@ -334,7 +334,7 @@ def register():
             INSERT INTO users (email, password, first_name, last_name, role, state, is_superadmin, is_verified, is_active)
             VALUES (%s, %s, %s, %s, %s, %s, FALSE, FALSE, FALSE)
             RETURNING id
-        """, (email, hashed_pw, 'state_admin', state))
+        """, (email, hashed_pw, first_name, last_name, 'state_admin', state, False, False, False))
         user_id = cursor.fetchone()[0]
 
         # Generate and store verification token
