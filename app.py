@@ -641,7 +641,7 @@ def get_all_users():
 
 
 # 👨‍💼 Get all admins (Superadmin only)
-app.route("/admins", methods=["GET"])
+@app.route("/admins", methods=["GET"])
 @superadmin_required
 def get_all_admins():
     try:
