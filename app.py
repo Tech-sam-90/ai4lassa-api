@@ -749,32 +749,62 @@ def promote_to_superadmin(admin_id):
 @superadmin_required
 def get_upload_statistics():
     try:
-        cursor.execute("""
-            SELECT u.id, u.first_name, u.last_name, u.email, u.state, 
-                   COUNT(ul.id) as total_uploads,
-                   MAX(ul.created_at) as last_upload
-            FROM users u
-            LEFT JOIN upload_logs ul ON u.id = ul.user_id
-            WHERE u.is_superadmin = FALSE
-            GROUP BY u.id, u.first_name, u.last_name, u.email, u.state
-            ORDER BY total_uploads DESC, last_upload DESC
-        """)
+        # This query uses a window function to rank uploads for each user
+        # and selects the top 5 for each. This is more efficient than N+1 queries.
+        query = """
+            WITH RankedUploads AS (
+                SELECT
+                    user_id,
+                    action_details,
+                    created_at,
+                    ROW_NUMBER() OVER(PARTITION BY user_id ORDER BY created_at DESC) as rn
+                FROM
+                    upload_logs
+            )
+            SELECT
+                u.id as user_id,
+                u.first_name,
+                u.last_name,
+                u.email,
+                u.state,
+                ru.action_details,
+                ru.created_at
+            FROM
+                users u
+            LEFT JOIN
+                RankedUploads ru ON u.id = ru.user_id
+            WHERE
+                u.is_superadmin = FALSE
+                AND (ru.rn <= 5 OR ru.rn IS NULL)
+            ORDER BY
+                u.id, ru.created_at DESC;
+        """
+        cursor.execute(query)
         
-        statistics = []
+        # Group the flat results from the SQL query by user
+        user_stats = {}
         for row in cursor.fetchall():
-            statistics.append({
-                "user_id": row[0],
-                "name": f"{row[1]} {row[2]}",
-                "email": row[3],
-                "state": row[4],
-                "total_uploads": row[5],
-                "last_upload": row[6].isoformat() if row[6] else None
-            })
+            user_id = row['user_id']
+            if user_id not in user_stats:
+                user_stats[user_id] = {
+                    "user_id": user_id,
+                    "name": f"{row['first_name']} {row['last_name']}",
+                    "email": row['email'],
+                    "state": row['state'],
+                    "recent_uploads": []
+                }
+            
+            # Add upload details if they exist (LEFT JOIN can result in NULLs for users with no uploads)
+            if row['action_details']:
+                user_stats[user_id]['recent_uploads'].append({
+                    "details": row['action_details'],
+                    "uploaded_at": row['created_at'].isoformat()
+                })
         
-        return jsonify({"upload_statistics": statistics})
+        # Convert the dictionary of users to a list for the JSON response
+        return jsonify({"upload_statistics": list(user_stats.values())})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
-
 
 # Run
 if __name__ == "__main__":
