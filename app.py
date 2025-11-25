@@ -504,6 +504,28 @@ def promote_to_superadmin(admin_id):
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 400
+    
+
+# add an endpoint to for calculating the overall total for each state
+@app.route("/state_totals", methods=["GET"])
+def state_totals():
+    try:
+        cursor.execute("""
+            SELECT state, SUM(cases) AS total_cases
+            FROM lassa_stats
+            GROUP BY state
+            ORDER BY total_cases DESC
+        """)
+        rows = cursor.fetchall()
+
+        result = [
+            {"state": row[0], "total_cases": row[1]}
+            for row in rows
+        ]
+
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 # Run
 if __name__ == "__main__":
