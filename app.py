@@ -41,7 +41,7 @@ SENDER_EMAIL = EMAIL_USER
 
 # DB connection
 try:
-    conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+    conn = psycopg2.connect(DATABASE_URL, sslmode='verify-full')
     cursor = conn.cursor()
     logging.info("Database connection successful.")
 except Exception as e:
@@ -811,4 +811,5 @@ if __name__ == "__main__":
     if not all([DATABASE_URL, SECRET_KEY, SUPERADMIN_SECRET_KEY, EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASS]):
         logging.warning("One or more critical environment variables are not set. The application might not function correctly.")
     app.run(host="0.0.0.0", port=10000)
+
 
