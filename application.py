@@ -743,6 +743,28 @@ def promote_to_superadmin(admin_id):
     except Exception as e:
         conn.rollback()
         return jsonify({"error": str(e)}), 400
+    
+
+# add an endpoint to for calculating the overall total for each state
+@app.route("/state_totals", methods=["GET"])
+def state_totals():
+    try:
+        cursor.execute("""
+            SELECT state, SUM(cases) AS total_cases
+            FROM lassa_stats
+            GROUP BY state
+            ORDER BY total_cases DESC
+        """)
+        rows = cursor.fetchall()
+
+        result = [
+            {"state": row[0], "total_cases": row[1]}
+            for row in rows
+        ]
+
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 # 📊 Get upload statistics for all users (Superadmin only)
 @app.route("/upload_statistics", methods=["GET"])
@@ -811,7 +833,4 @@ if __name__ == "__main__":
     if not all([DATABASE_URL, SECRET_KEY, SUPERADMIN_SECRET_KEY, EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASS]):
         logging.warning("One or more critical environment variables are not set. The application might not function correctly.")
     app.run(host="0.0.0.0", port=10000)
-
-
-
 
