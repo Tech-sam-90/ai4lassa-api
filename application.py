@@ -26,7 +26,7 @@ app = Flask(__name__)
 # ========== Configuration ==========
 
 # Environment variables
-DATABASE_URL = os.environ.get("DATABASE_URL", "your_local_fallback")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 SECRET_KEY = os.environ.get("SECRET_KEY", "change_this_key")
 SUPERADMIN_SECRET_KEY = os.environ.get("SUPERADMIN_SECRET_KEY", "your_super_secret_key")
 JWT_ALGORITHM = "HS256"
